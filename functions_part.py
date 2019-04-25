@@ -13,8 +13,8 @@ def loadRatings(ratingstablename, ratingsfilepath, openconnection):
 def rangePartition(ratingstablename, numberofpartitions, openconnection):
     cur = openconnection.cursor()
     step = 5.0/numberofpartitions
-    range = [[i*step, (i+1)*step] for i in xrange(numberofpartitions)]
-    for i in xrange(numberofpartitions):
+    range = [[i*step, (i+1)*step] for i in range(numberofpartitions)]
+    for i in range(numberofpartitions):
         main_part='''CREATE TABLE range_part{0}(UserID INT, MovieID INT, Rating FLOAT);
         INSERT INTO range_part{0}(UserID, MovieID, Rating)
     	   SELECT UserID, MovieID, Rating
@@ -41,7 +41,7 @@ def roundRobinPartition(ratingstablename, numberofpartitions, openconnection):
 	   SELECT userid, movieid, rating
 	   FROM {};'''.format(ratingstablename)
     cur.execute(first_part)
-    for i in xrange(numberofpartitions):
+    for i in range(numberofpartitions):
         index = numberofpartitions - i/numberofpartitions
         rr_tables = '''CREATE TABLE rrobin_part{}(
 	       UserID INT,
@@ -59,6 +59,8 @@ def roundRobinPartition(ratingstablename, numberofpartitions, openconnection):
 def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
     cur = openconnection.cursor()
     insert_ratings = '''INSERT INTO {0}(userid, movieid, rating)
+        VALUES({1},{2},{3});
+        INSERT INTO indexed_ratings(userid, movieid, rating)
         VALUES({1},{2},{3});'''.format(ratingstablename,userid, itemid, rating)
     cur.execute(insert_ratings)
     all_table_names = '''SELECT table_name
@@ -69,16 +71,55 @@ def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
     list_of_table_names = list(cur.fetchall())
     index_rrobin_list = []
     for i in list_of_table_names:
-        if 'rrobin_part' in i:
-                list_of_table_names.append(int(i[-1]))
-    numberofpartitions = max(tuple(list_of_table_names))+1
-    insert_rrobin = '''INSERT INTO rrobin_part{0}
-        VALUES ({1},{2},{3});'''.format(numberofpartitions-1, userid, itemid, rating)
-    cur.execute(insert_rrobin)
+        if 'rrobin_part' in str(i):
+            index_rrobin_list.append(int(i[0][-1]))
+    numberofpartitions = max(index_rrobin_list)+1
+    for i in range(numberofpartitions):
+        rr_partition = '''INSERT INTO rrobin_part{0}
+        SELECT userid, movieid, rating
+        FROM indexed_ratings
+        WHERE MOD(index-1,{1}) = {0}
+        AND userid='{2}' AND movieid='{3}'
+        AND rating='{4}';'''.format(i, numberofpartitions, userid, itemid, rating)
+        cur.execute(rr_partition)
     openconnection.commit()
 
 def rangeinsert(ratingstablename, userid, itemid, rating, openconnection):
-    pass
+    cur = openconnection.cursor()
+    insert_ratings = '''INSERT INTO {0}(userid, movieid, rating)
+        VALUES({1},{2},{3});'''.format(ratingstablename,userid, itemid, rating)
+    cur.execute(insert_ratings)
+    all_table_names = '''SELECT table_name
+    FROM information_schema.tables
+    WHERE table_type='BASE TABLE'
+    AND table_schema='public';'''
+    cur.execute(all_table_names)
+    list_of_table_names = list(cur.fetchall())
+    index_range_list = []
+    for i in list_of_table_names:
+        if 'range_part' in str(i):
+            index_range_list.append(int(i[0][-1]))
+    numberofpartitions = max(index_range_list)+1
+    step = 5.0/numberofpartitions
+    range = [[i*step, (i+1)*step] for i in range(numberofpartitions)]
+    for i in range(numberofpartitions):
+        main_part='''INSERT INTO range_part{0}(UserID, MovieID, Rating)
+    	SELECT UserID, MovieID, Rating
+    	FROM Ratings
+    	WHERE rating >{1} AND rating<={2}
+        AND userid='{3}' AND movieid='{4}'
+        AND rating='{5}';'''.format(i,range[i][0],range[i][1],userid, itemid, rating)
+        cur.execute(main_part)
+    if rating == 0:
+        zero_values = '''INSERT INTO range_part0(UserID, MovieID, Rating)
+        SELECT UserID, MovieID, Rating
+        FROM Ratings
+        WHERE rating = 0
+        AND userid='{0}' AND movieid='{1}'
+        AND rating='{2}';'''.format(userid, itemid, rating)
+        cur.execute(zero_values)
+    openconnection.commit()
+
 
 def createDB(dbname='dds_assignment'):
     """
@@ -96,7 +137,7 @@ def createDB(dbname='dds_assignment'):
     if count == 0:
         cur.execute('CREATE DATABASE %s' % (dbname,))  # Create the database
     else:
-        print 'A database named {0} already exists'.format(dbname)
+        print('A database named {0} already exists').format(dbname)
 
     # Clean up
     cur.close()
@@ -124,14 +165,14 @@ def deleteTables(ratingstablename, openconnection):
         else:
             cursor.execute('DROP TABLE %s CASCADE' % (ratingstablename))
         openconnection.commit()
-    except psycopg2.DatabaseError, e:
+    except(psycopg2.DatabaseError, e):
         if openconnection:
             openconnection.rollback()
-        print 'Error %s' % e
-    except IOError, e:
+        print('Error %s' % e)
+    except(IOError, e):
         if openconnection:
             openconnection.rollback()
-        print 'Error %s' % e
+        print('Error %s' % e)
     finally:
         if cursor:
             cursor.close()
