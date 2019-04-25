@@ -11,13 +11,71 @@ def loadRatings(ratingstablename, ratingsfilepath, openconnection):
     openconnection.commit()
 
 def rangePartition(ratingstablename, numberofpartitions, openconnection):
-    pass
+    cur = openconnection.cursor()
+    step = 5.0/numberofpartitions
+    range = [[i*step, (i+1)*step] for i in xrange(numberofpartitions)]
+    for i in xrange(numberofpartitions):
+        main_part='''CREATE TABLE range_part{0}(UserID INT, MovieID INT, Rating FLOAT);
+        INSERT INTO range_part{0}(UserID, MovieID, Rating)
+    	   SELECT UserID, MovieID, Rating
+    	      FROM Ratings
+    	         WHERE rating >{1} AND rating<={2};'''.format(i,range[i][0],range[i][1])
+        cur.execute(main_part)
+    zero_values = '''INSERT INTO range_part0(UserID, MovieID, Rating)
+       SELECT UserID, MovieID, Rating
+          FROM Ratings
+             WHERE rating = 0;'''
+    cur.execute(zero_values)
+    openconnection.commit()
 
 def roundRobinPartition(ratingstablename, numberofpartitions, openconnection):
-    pass
+    cur = openconnection.cursor()
+    first_part = '''DROP TABLE IF EXISTS indexed_ratings;
+    CREATE TABLE indexed_ratings(
+	index SERIAL PRIMARY KEY,
+	UserID INT,
+	MovieID INT,
+	Rating FLOAT
+    );
+    INSERT INTO indexed_ratings(userid, movieid, rating)
+	   SELECT userid, movieid, rating
+	   FROM {};'''.format(ratingstablename)
+    cur.execute(first_part)
+    for i in xrange(numberofpartitions):
+        index = numberofpartitions - i/numberofpartitions
+        rr_tables = '''CREATE TABLE rrobin_part{}(
+	       UserID INT,
+	          MovieID INT,
+	             Rating FLOAT
+                 );'''.format(i)
+        cur.execute(rr_tables)
+        rr_partition = '''INSERT INTO rrobin_part{0}
+        SELECT userid, movieid, rating
+        FROM indexed_ratings
+        WHERE MOD(index-1,{1}) = {0};'''.format(i, numberofpartitions)
+        cur.execute(rr_partition)
+    openconnection.commit()
 
 def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
-    pass
+    cur = openconnection.cursor()
+    insert_ratings = '''INSERT INTO {0}(userid, movieid, rating)
+        VALUES({1},{2},{3});'''.format(ratingstablename,userid, itemid, rating)
+    cur.execute(insert_ratings)
+    all_table_names = '''SELECT table_name
+    FROM information_schema.tables
+    WHERE table_type='BASE TABLE'
+    AND table_schema='public';'''
+    cur.execute(all_table_names)
+    list_of_table_names = list(cur.fetchall())
+    index_rrobin_list = []
+    for i in list_of_table_names:
+        if 'rrobin_part' in i:
+                list_of_table_names.append(int(i[-1]))
+    numberofpartitions = max(tuple(list_of_table_names))+1
+    insert_rrobin = '''INSERT INTO rrobin_part{0}
+        VALUES ({1},{2},{3});'''.format(numberofpartitions-1, userid, itemid, rating)
+    cur.execute(insert_rrobin)
+    openconnection.commit()
 
 def rangeinsert(ratingstablename, userid, itemid, rating, openconnection):
     pass
